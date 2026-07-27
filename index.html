@@ -398,6 +398,7 @@ const PHASE_LABEL = {accumulation:'Accumulation', uptrend:'Uptrend', distributio
 const PHASE_SCORE = {accumulation:0.5, uptrend:1, distribution:-0.5, downtrend:-1};
 const TF_WEIGHT = {'1W':5,'1D':4,'4H':3,'1H':2,'15m':1};
 const SETUP_TAGS = ['Hammer','Engulfing','Liquidity Sweep','Volume Spike','VP Confluence','HTF Aligned','Market Open','Mid-Session','Market Close','Structure Break'];
+const TRADERS = ['Roger','Marc','Victor'];
 const TRADE_TYPES = [
   {id:'reversion', label:'Mean Reversion (neutral)', desc:'No clear HTF bias, or range day. Target VWAP or the opposite band — the original thesis.'},
   {id:'continuation', label:'Trend Continuation (pullback)', desc:'Band touched is against the HTF trend — a pullback. Target extends past VWAP toward prior structure, not capped at VWAP.'},
@@ -412,6 +413,13 @@ function modelPill(tt){
   tt = tt||'reversion';
   const m = TRADE_TYPE_META[tt]||TRADE_TYPE_META.reversion;
   return `<span class="pill ${m.pill}">${m.short}</span>`;
+}
+function traderPill(name){
+  if(!name) return `<span class="pill pill-be">Unassigned</span>`;
+  const colors = [['var(--blue-soft)','var(--blue)'], ['var(--green-soft)','var(--green)'], ['var(--amber-soft)','var(--amber)']];
+  const idx = Math.max(0, TRADERS.indexOf(name));
+  const [bg,fg] = colors[idx % colors.length];
+  return `<span class="pill" style="background:${bg};color:${fg}">${name}</span>`;
 }
 
 async function loadAll(){
@@ -533,6 +541,7 @@ function logPanel(key, title, desc){
           <option value="be">B/E</option><option value="open">Open</option>
         </select>
         <select id="filterSetup-${key}"><option value="">All setups</option>${SETUP_TAGS.map(s=>`<option value="${s}">${s}</option>`).join('')}</select>
+        <select id="filterTrader-${key}"><option value="">All traders</option>${TRADERS.map(tr=>`<option value="${tr}">${tr}</option>`).join('')}</select>
         <div class="spacer"></div>
         <span style="font-size:11.5px;color:var(--text-faint)" id="rowCount-${key}"></span>
       </div>
@@ -546,6 +555,7 @@ function renderLogTable(key){
   const assetSel = document.getElementById(`filterAsset-${key}`);
   const outSel = document.getElementById(`filterOutcome-${key}`);
   const setupSel = document.getElementById(`filterSetup-${key}`);
+  const traderSel = document.getElementById(`filterTrader-${key}`);
   const assets = [...new Set(list.map(t=>t.asset).filter(Boolean))].sort();
   if(assetSel && assetSel.options.length<=1){
     assets.forEach(a=>assetSel.insertAdjacentHTML('beforeend',`<option value="${a}">${a}</option>`));
@@ -553,11 +563,13 @@ function renderLogTable(key){
   const fa = assetSel?assetSel.value:'';
   const fo = outSel?outSel.value:'';
   const fs = setupSel?setupSel.value:'';
+  const ft = traderSel?traderSel.value:'';
 
   let filtered = list.filter(t=>{
     if(fa && t.asset!==fa) return false;
     if(fo && tradeOutcome(t)!==fo) return false;
     if(fs && !(t.tags||[]).includes(fs)) return false;
+    if(ft && t.trader!==ft) return false;
     return true;
   }).sort((a,b)=> (b.date||'').localeCompare(a.date||''));
 
@@ -571,7 +583,7 @@ function renderLogTable(key){
   wrap.innerHTML = `
     <table>
       <thead><tr>
-        <th>Date</th><th>Asset</th><th>Dir</th><th>Session</th><th>Entry</th><th>Stop</th><th>Target</th><th>Exit</th>
+        <th>Date</th><th>Trader</th><th>Asset</th><th>Dir</th><th>Session</th><th>Entry</th><th>Stop</th><th>Target</th><th>Exit</th>
         <th>Risk%</th><th>R</th><th>P&amp;L</th><th>HTF</th><th>Model</th><th>Outcome</th><th></th>
       </tr></thead>
       <tbody>
@@ -579,6 +591,7 @@ function renderLogTable(key){
           const r = computeTradeR(t); const pnl = computeTradePnl(t); const o = tradeOutcome(t);
           return `<tr data-id="${t.id}" data-key="${key}">
             <td>${t.date||'—'}</td>
+            <td>${traderPill(t.trader)}</td>
             <td style="font-family:inherit;font-weight:600">${t.asset||'—'}</td>
             <td><span class="pill ${t.direction==='short'?'pill-short':'pill-long'}">${t.direction==='short'?'Short':'Long'}</span></td>
             <td>${t.session==='swing'?'Swing':'Day'}</td>
@@ -601,7 +614,7 @@ function renderLogTable(key){
       openTradeModal(tr.dataset.key, tr.dataset.id);
     });
   });
-  [assetSel,outSel,setupSel].forEach(s=>{ if(s && !s.dataset.wired){ s.dataset.wired='1'; s.addEventListener('change',()=>renderLogTable(key)); } });
+  [assetSel,outSel,setupSel,traderSel].forEach(s=>{ if(s && !s.dataset.wired){ s.dataset.wired='1'; s.addEventListener('change',()=>renderLogTable(key)); } });
 }
 
 function openTradeModal(key, id){
@@ -610,7 +623,7 @@ function openTradeModal(key, id){
     id: 'tr_'+Date.now()+Math.random().toString(36).slice(2,7),
     date: new Date().toISOString().slice(0,10), time:'', asset:'', direction:'long', session:'day',
     entry:'', stop:'', target:'', exit:'', riskPct: STATE.settings.defaultRisk, acctSize: STATE.settings.accountSize,
-    htfAligned:false, tradeType:'reversion', tags:[], notes:'', outcome:''
+    htfAligned:false, tradeType:'reversion', trader:'', tags:[], notes:'', outcome:''
   } : STATE[key].find(x=>x.id===id);
 
   const modalRoot = document.getElementById('modalRoot');
@@ -619,6 +632,10 @@ function openTradeModal(key, id){
     <div class="modal">
       <button class="modal-close" id="modalClose">&times;</button>
       <h2>${isNew?'Log New Trade':'Edit Trade'}</h2>
+      <div class="field">
+        <label>Trader</label>
+        <div id="f_trader_group">${TRADERS.map(tr=>`<span class="tag-chip trader-chip ${t.trader===tr?'on':''}" data-trader="${tr}">${tr}</span>`).join('')}</div>
+      </div>
       <div class="field-row">
         <div class="field"><label>Date</label><input type="date" id="f_date" value="${t.date}"></div>
         <div class="field"><label>Time</label><input type="time" id="f_time" value="${t.time||''}"></div>
@@ -673,11 +690,18 @@ function openTradeModal(key, id){
     document.getElementById('f_tradetype_desc').textContent = TRADE_TYPES.find(x=>x.id===e.target.value).desc;
   });
   let tagState = new Set(t.tags||[]);
-  modalRoot.querySelectorAll('.tag-chip').forEach(chip=>{
+  modalRoot.querySelectorAll('.tag-chip:not(.trader-chip)').forEach(chip=>{
     chip.addEventListener('click', ()=>{
       const tag = chip.dataset.tag;
       if(tagState.has(tag)){ tagState.delete(tag); chip.classList.remove('on'); }
       else{ tagState.add(tag); chip.classList.add('on'); }
+    });
+  });
+  let selectedTrader = t.trader||'';
+  modalRoot.querySelectorAll('.trader-chip').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      selectedTrader = chip.dataset.trader;
+      modalRoot.querySelectorAll('.trader-chip').forEach(c=>c.classList.toggle('on', c===chip));
     });
   });
   const close = ()=>{ modalRoot.innerHTML=''; };
@@ -692,6 +716,7 @@ function openTradeModal(key, id){
   document.getElementById('saveTradeBtn').onclick = async ()=>{
     const newTrade = {
       id:t.id,
+      trader: selectedTrader,
       date: document.getElementById('f_date').value,
       time: document.getElementById('f_time').value,
       asset: document.getElementById('f_asset').value.trim().toUpperCase(),
@@ -727,11 +752,17 @@ function statsPanel(){
         <h1>Statistics</h1>
         <p>Aggregated from your logs. Toggle the source to keep live performance separate from replay/backtest data — never average the two.</p>
       </div>
-      <select id="statsSource" style="width:auto;min-width:170px">
-        <option value="trades">Live trades</option>
-        <option value="backtest">Backtest trades</option>
-        <option value="both">Combined (not recommended)</option>
-      </select>
+      <div style="display:flex;gap:10px">
+        <select id="statsTrader" style="width:auto;min-width:150px">
+          <option value="">All traders</option>
+          ${TRADERS.map(tr=>`<option value="${tr}">${tr}</option>`).join('')}
+        </select>
+        <select id="statsSource" style="width:auto;min-width:170px">
+          <option value="trades">Live trades</option>
+          <option value="backtest">Backtest trades</option>
+          <option value="both">Combined (not recommended)</option>
+        </select>
+      </div>
     </div>
     <div id="statsBody"></div>
   `;
@@ -743,7 +774,11 @@ function getStatsList(source){
 }
 function renderStatsBody(){
   const source = document.getElementById('statsSource').value;
-  const list = getStatsList(source).filter(t=>tradeOutcome(t)!=='open').sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const traderFilter = document.getElementById('statsTrader').value;
+  const list = getStatsList(source)
+    .filter(t=>tradeOutcome(t)!=='open')
+    .filter(t=> !traderFilter || t.trader===traderFilter)
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
   const body = document.getElementById('statsBody');
   if(list.length===0){
     body.innerHTML = `<div class="card"><div class="empty-state"><span class="big">No closed trades yet</span>Statistics populate once trades have an exit price.</div></div>`;
@@ -802,6 +837,13 @@ function renderStatsBody(){
     const label = (TRADE_TYPES.find(x=>x.id===(t.tradeType||'reversion'))||{}).label || 'Mean Reversion (neutral)';
     typeAgg[label]=typeAgg[label]||{n:0,sum:0}; typeAgg[label].n++; typeAgg[label].sum+=r;
   });
+  // breakdown by trader
+  const traderAgg = {};
+  list.forEach(t=>{
+    const r = computeTradeR(t); if(r===null) return;
+    const label = t.trader || 'Unassigned';
+    traderAgg[label]=traderAgg[label]||{n:0,sum:0}; traderAgg[label].n++; traderAgg[label].sum+=r;
+  });
 
   body.innerHTML = `
     <div class="grid grid-4">
@@ -825,6 +867,11 @@ function renderStatsBody(){
         <button class="btn btn-sm ${equityViewMode==='USD'?'btn-gold':'btn-ghost'}" id="eqViewUSD">Account $</button>
       </div>
       <div id="equityCurveWrap">${equityCurveSvg(equityViewMode==='USD'?pointsPnl:points, equityViewMode)}</div>
+    </div>
+
+    <div class="card">
+      <h3>By Trader</h3>
+      ${breakdownTable(traderAgg)}
     </div>
 
     <div class="grid grid-3" style="margin-top:0">
@@ -1234,6 +1281,7 @@ function wireUpPanel(){
   if(STATE.activeTab==='stats'){
     const sel = document.getElementById('statsSource');
     sel.addEventListener('change', renderStatsBody);
+    document.getElementById('statsTrader').addEventListener('change', renderStatsBody);
     calMonthOffset = 0;
     renderStatsBody();
   }
